@@ -1,0 +1,6 @@
+cluster,size,dominant_topic,dominant_share,topic_count
+0,1445,rec.motorcycles,0.35294117647058826,8
+1,1198,comp.graphics,0.34307178631051755,8
+2,366,sci.med,0.9480874316939891,8
+3,1046,comp.sys.ibm.pc.hardware,0.3967495219885277,8
+4,516,sci.space,0.7248062015503876,8
