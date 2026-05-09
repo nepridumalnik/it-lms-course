@@ -2,22 +2,21 @@ import csv
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from app.core.config import ARTIFACTS_DIR, DATA_DIR, METADATA_PATH, MODEL_PATH, TRAINING_DATA_PATH
-from app.models.schemas import PredictionRequest, PredictionResponse
+from app.models.schemas import ModelInfoResponse, PredictionRequest, PredictionResponse
 
 
 LOGGER = logging.getLogger(__name__)
-
 
 FEATURE_NAMES = [
     "age",
@@ -30,6 +29,10 @@ FEATURE_NAMES = [
     "loan_to_income",
 ]
 
+DATASET_TYPE = "synthetic_credit_scoring"
+DECISION_THRESHOLD = 0.5
+MODEL_CLASS_MEANING = "internal model predicts default_risk; API class is approval decision"
+
 
 class ModelNotReadyError(RuntimeError):
     pass
@@ -41,24 +44,34 @@ class ModelMetadata:
     accuracy: float
     roc_auc: float
     threshold: float
+    best_params: Dict[str, Any]
+    dataset_type: str
 
 
 class ModelService:
+    """Сервис загрузки модели, обучения и скоринга заявок."""
+
     def __init__(self) -> None:
         self.model: Pipeline | None = None
         self.metadata: ModelMetadata | None = None
 
     def load_or_train(self) -> None:
+        """Загрузить готовую модель или обучить новую."""
         ARTIFACTS_DIR.mkdir(exist_ok=True)
         DATA_DIR.mkdir(exist_ok=True)
 
         if MODEL_PATH.exists() and METADATA_PATH.exists():
-            self.model = joblib.load(MODEL_PATH)
-            self.metadata = joblib.load(METADATA_PATH)
-            LOGGER.info("Loaded model from %s", MODEL_PATH)
-            return
+            loaded_model = joblib.load(MODEL_PATH)
+            loaded_metadata = joblib.load(METADATA_PATH)
+            if self._metadata_is_compatible(loaded_metadata):
+                self.model = loaded_model
+                self.metadata = loaded_metadata
+                LOGGER.info("Модель загружена из %s", MODEL_PATH)
+                return
 
-        LOGGER.info("Model artifact missing. Training local model.")
+            LOGGER.info("Найдены старые метаданные модели. Запускаю переобучение.")
+
+        LOGGER.info("Обучаю модель с подбором гиперпараметров.")
         X, y = self._build_dataset(TRAINING_DATA_PATH)
         X_train, X_test, y_train, y_test = train_test_split(
             X,
@@ -68,59 +81,104 @@ class ModelService:
             stratify=y,
         )
 
-        model = Pipeline(
+        pipeline = Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
-                (
-                    "classifier",
-                    RandomForestClassifier(
-                        n_estimators=160,
-                        max_depth=7,
-                        min_samples_leaf=3,
-                        random_state=42,
-                        class_weight="balanced",
-                    ),
-                ),
+                ("classifier", RandomForestClassifier(random_state=42, n_jobs=1)),
             ]
         )
-        model.fit(X_train, y_train)
+        param_grid = {
+            "classifier__n_estimators": [80, 140],
+            "classifier__max_depth": [5, None],
+            "classifier__min_samples_leaf": [2, 5],
+            "classifier__class_weight": [None, "balanced"],
+        }
+        search = GridSearchCV(
+            estimator=pipeline,
+            param_grid=param_grid,
+            scoring="roc_auc",
+            cv=3,
+            n_jobs=-1,
+            refit=True,
+        )
+        search.fit(X_train, y_train)
 
-        probabilities = model.predict_proba(X_test)[:, 1]
-        predictions = (probabilities >= 0.5).astype(int)
+        best_model = search.best_estimator_
+        probabilities = best_model.predict_proba(X_test)[:, 1]
+        predictions = (probabilities >= DECISION_THRESHOLD).astype(int)
         metadata = ModelMetadata(
             feature_names=FEATURE_NAMES,
             accuracy=float(accuracy_score(y_test, predictions)),
             roc_auc=float(roc_auc_score(y_test, probabilities)),
-            threshold=0.5,
+            threshold=DECISION_THRESHOLD,
+            best_params=dict(search.best_params_),
+            dataset_type=DATASET_TYPE,
         )
 
-        joblib.dump(model, MODEL_PATH)
+        joblib.dump(best_model, MODEL_PATH)
         joblib.dump(metadata, METADATA_PATH)
-        self.model = model
+        self.model = best_model
         self.metadata = metadata
-        LOGGER.info("Trained model: accuracy=%.3f roc_auc=%.3f", metadata.accuracy, metadata.roc_auc)
+        LOGGER.info(
+            "Модель обучена: accuracy=%.3f roc_auc=%.3f best_params=%s",
+            metadata.accuracy,
+            metadata.roc_auc,
+            metadata.best_params,
+        )
 
     def predict(self, payload: PredictionRequest) -> PredictionResponse:
+        """Вернуть бизнес-решение и вероятности по одной заявке."""
         if self.model is None or self.metadata is None:
-            raise ModelNotReadyError("Model is not loaded.")
+            raise ModelNotReadyError("Модель не загружена.")
 
         features = self._features_from_payload(payload)
         X = np.array([[features[name] for name in FEATURE_NAMES]], dtype=float)
         risk_probability = float(self.model.predict_proba(X)[0, 1])
         approved = risk_probability < self.metadata.threshold
+        approval_probability = 1 - risk_probability
 
         return PredictionResponse(
-            prediction="approved" if approved else "rejected",
-            risk_probability=round(risk_probability, 4),
-            approval_probability=round(1 - risk_probability, 4),
+            class_=1 if approved else 0,
+            decision="одобрить" if approved else "отказать",
+            model_target="default_risk",
+            model_class_meaning=MODEL_CLASS_MEANING,
+            probability_approved=round(approval_probability, 4),
+            probability_risk=round(risk_probability, 4),
             decision_threshold=self.metadata.threshold,
             features={key: round(value, 4) for key, value in features.items()},
         )
 
+    def get_model_info(self) -> ModelInfoResponse:
+        """Вернуть метаданные текущей модели."""
+        if self.metadata is None:
+            raise ModelNotReadyError("Модель не загружена.")
+
+        return ModelInfoResponse(
+            feature_names=self.metadata.feature_names,
+            accuracy=round(self.metadata.accuracy, 4),
+            roc_auc=round(self.metadata.roc_auc, 4),
+            threshold=self.metadata.threshold,
+            best_params=self.metadata.best_params,
+            dataset_type=self.metadata.dataset_type,
+        )
+
+    def _metadata_is_compatible(self, metadata: object) -> bool:
+        """Проверить, что артефакт создан новой версией обучения."""
+        required_fields = [
+            "feature_names",
+            "accuracy",
+            "roc_auc",
+            "threshold",
+            "best_params",
+            "dataset_type",
+        ]
+        return all(hasattr(metadata, field) for field in required_fields)
+
     def _features_from_payload(self, payload: PredictionRequest) -> Dict[str, float]:
+        """Собрать признаки из входного запроса."""
         annual_income = float(payload.annual_income)
         if annual_income <= 0:
-            raise ValueError("annual_income must be greater than 0 for ratio features.")
+            raise ValueError("Поле annual_income должно быть больше 0 для расчета долей.")
 
         return {
             "age": float(payload.age),
@@ -134,6 +192,7 @@ class ModelService:
         }
 
     def _build_dataset(self, path: Path) -> tuple[np.ndarray, np.ndarray]:
+        """Прочитать датасет и подготовить матрицу признаков."""
         if not path.exists():
             self._generate_training_data(path)
 
@@ -162,6 +221,7 @@ class ModelService:
         return np.asarray(rows, dtype=float), np.asarray(labels, dtype=int)
 
     def _generate_training_data(self, path: Path) -> None:
+        """Создать синтетический датасет для учебного скоринга."""
         rng = np.random.default_rng(42)
         path.parent.mkdir(exist_ok=True)
 

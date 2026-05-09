@@ -17,8 +17,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Local ML Scoring Service",
-    description="FastAPI service for local credit risk scoring with scikit-learn.",
+    title="ML-сервис кредитного скоринга",
+    description="REST-сервис для оценки вероятности одобрения кредита на scikit-learn.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -30,7 +30,7 @@ async def request_logging(request: Request, call_next):
     response = await call_next(request)
     elapsed_ms = (time.perf_counter() - start) * 1000
     logging.info(
-        "%s %s -> %s %.2fms",
+        "Запрос %s %s -> %s %.2f мс",
         request.method,
         request.url.path,
         response.status_code,
