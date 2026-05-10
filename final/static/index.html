@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Airfoil Noise Predictor</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --text: #172033;
+            --muted: #667085;
+            --line: #d8dee9;
+            --accent: #1769e0;
+            --accent-dark: #0f55bd;
+            --danger: #b42318;
+            --success: #067647;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 32px 16px;
+            background:
+                radial-gradient(circle at top left, rgba(23, 105, 224, 0.12), transparent 34rem),
+                var(--bg);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        main {
+            width: min(760px, 100%);
+            background: var(--panel);
+            border: 1px solid rgba(23, 32, 51, 0.08);
+            border-radius: 8px;
+            box-shadow: 0 24px 60px rgba(23, 32, 51, 0.14);
+            overflow: hidden;
+        }
+
+        header {
+            padding: 28px 32px 18px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: clamp(26px, 4vw, 38px);
+            line-height: 1.1;
+            font-weight: 750;
+            letter-spacing: 0;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.55;
+        }
+
+        form {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+            padding: 28px 32px 32px;
+        }
+
+        label {
+            display: grid;
+            gap: 7px;
+            font-weight: 650;
+            color: #263247;
+        }
+
+        label span {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.35;
+        }
+
+        input {
+            width: 100%;
+            min-height: 46px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: var(--text);
+            background: #fbfcfe;
+            font: inherit;
+            outline: none;
+            transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            background: #ffffff;
+            box-shadow: 0 0 0 4px rgba(23, 105, 224, 0.14);
+        }
+
+        input:invalid {
+            border-color: #f04438;
+        }
+
+        .actions {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding-top: 6px;
+        }
+
+        button {
+            min-height: 46px;
+            border: 0;
+            border-radius: 8px;
+            padding: 0 22px;
+            background: var(--accent);
+            color: #ffffff;
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.16s ease, transform 0.16s ease;
+        }
+
+        button:hover {
+            background: var(--accent-dark);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        #result {
+            min-height: 24px;
+            color: var(--muted);
+            font-weight: 650;
+        }
+
+        #result.ok {
+            color: var(--success);
+        }
+
+        #result.error {
+            color: var(--danger);
+        }
+
+        @media (max-width: 640px) {
+            header,
+            form {
+                padding-left: 20px;
+                padding-right: 20px;
+            }
+
+            form {
+                grid-template-columns: 1fr;
+            }
+
+            .actions {
+                align-items: stretch;
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <h1>Прогноз шума профиля</h1>
+            <p>Введите параметры аэродинамического профиля.</p>
+        </header>
+
+        <form id="predict-form">
+            <label>
+                Частота колебаний
+                <span>frequency, пример: 1250</span>
+                <input name="frequency" type="number" min="0" step="any" value="1250" required>
+            </label>
+
+            <label>
+                Угол атаки профиля
+                <span>attack-angle, пример: 0.0</span>
+                <input name="attack-angle" type="number" min="0" step="any" value="0.0" required>
+            </label>
+
+            <label>
+                Длина хорды профиля
+                <span>chord-length, пример: 0.2286</span>
+                <input name="chord-length" type="number" min="0" step="any" value="0.2286" required>
+            </label>
+
+            <label>
+                Скорость набегающего потока
+                <span>free-stream-velocity, пример: 39.6</span>
+                <input name="free-stream-velocity" type="number" min="0" step="any" value="39.6" required>
+            </label>
+
+            <label>
+                Толщина вытеснения
+                <span>suction-side-displacement-thickness, пример: 0.00253511</span>
+                <input name="suction-side-displacement-thickness" type="number" min="0" step="any" value="0.00253511" required>
+            </label>
+
+            <div class="actions">
+                <button type="submit">Отправить</button>
+                <output id="result" aria-live="polite"></output>
+            </div>
+        </form>
+    </main>
+
+    <script>
+        const form = document.querySelector("#predict-form");
+        const result = document.querySelector("#result");
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            result.className = "";
+
+            if (!form.checkValidity()) {
+                result.textContent = "Заполните поля числами от 0 и выше.";
+                result.className = "error";
+                form.reportValidity();
+                return;
+            }
+
+            const payload = Object.fromEntries(
+                Array.from(new FormData(form).entries()).map(([key, value]) => [key, Number(value)])
+            );
+
+            if (Object.values(payload).some((value) => Number.isNaN(value) || value < 0)) {
+                result.textContent = "Отрицательные значения запрещены.";
+                result.className = "error";
+                return;
+            }
+
+            result.textContent = "Считаю...";
+
+            try {
+                const response = await fetch("/api/inference", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || "Ошибка запроса");
+                }
+
+                result.textContent = `Прогноз: ${Number(data.prediction).toFixed(3)}`;
+                result.className = "ok";
+            } catch (error) {
+                result.textContent = error.message;
+                result.className = "error";
+            }
+        });
+    </script>
+</body>
+</html>
