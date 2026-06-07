@@ -8,13 +8,13 @@
 - `task.md` - текст задания.
 - `review_report.md` - текущий отчёт готовности проекта.
 - `data.csv` - исходный датасет UCI Airfoil Self-Noise.
-- `data/random_forest_model.pkl` - локальный артефакт обученной модели. Файл игнорируется git.
+- `data/random_forest_model.pkl` - локальный артефакт обученного sklearn Pipeline. Файл игнорируется git.
 - `app/controller.py` - настройка Flask-приложения и маршрутов.
 - `app/inferer.py` - загрузка модели и обработка API-запроса.
+- `app/features.py` - подготовка производных признаков для обучения и инференса.
 - `static/index.html` - HTML-форма для ручной проверки прогноза.
 - `main.py` - точка запуска сервиса.
 - `presentation.md` - структура презентации для защиты.
-- `screencast.md` - файл для ссылки на скринкаст и сценария записи.
 
 ## Данные
 
@@ -41,13 +41,13 @@ pip install -r requirements.txt
 jupyter notebook task.ipynb
 ```
 
-Выполнить notebook из командной строки, если установлен Jupyter/nbconvert:
+Выполнить notebook из командной строки:
 
 ```bash
 jupyter nbconvert --to notebook --execute --inplace task.ipynb
 ```
 
-После выполнения notebook модель сохраняется в:
+После выполнения notebook pipeline сохраняется в:
 
 ```text
 data/random_forest_model.pkl
@@ -101,25 +101,25 @@ curl -X POST http://127.0.0.1:8080/api/inference \
 
 ## Итоговые метрики
 
-Финальная модель: `RandomForestRegressor`.
+Финальная модель: sklearn `Pipeline` с feature engineering и `RandomForestRegressor`.
 
 Лучшие параметры по `GridSearchCV`:
 
 ```text
-max_depth=None
-min_samples_leaf=1
-n_estimators=200
+model__max_depth=20
+model__min_samples_leaf=1
+model__n_estimators=500
 ```
 
 Метрики на тестовой выборке:
 
 | Метрика | Значение |
 | --- | ---: |
-| MAE | 1.299809 |
-| MSE | 3.287820 |
-| RMSE | 1.813235 |
-| R2 | 0.934373 |
+| MAE | 1.265011 |
+| MSE | 2.826427 |
+| RMSE | 1.681198 |
+| R2 | 0.943583 |
 
 ## Ограничения
 
-Модель обучена на датасете UCI Airfoil Self-Noise и предназначена для предварительной оценки в диапазонах, близких к исходным экспериментальным данным. Прогноз не заменяет физический эксперимент.
+Модель обучена на датасете UCI Airfoil Self-Noise и предназначена для предварительной оценки в диапазонах, близких к исходным экспериментальным данным. Прогноз не заменяет физический эксперимент. Перед промышленным применением нужен независимый тест на данных целевого стенда или производства.
