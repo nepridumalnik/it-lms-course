@@ -95,7 +95,7 @@ curl -X POST http://127.0.0.1:8080/api/inference \
 
 ```json
 {
-  "prediction": 129.27325000000033
+  "prediction": 129.05594626666604
 }
 ```
 

@@ -1,5 +1,8 @@
 import flask
 import joblib
+import pandas as pd
+
+from .features import TRAIN_COLUMNS
 
 
 class Inferer:
@@ -10,19 +13,13 @@ class Inferer:
         data = flask.request.get_json()
 
         try:
-            features = [
-                float(data["frequency"]),
-                float(data["attack-angle"]),
-                float(data["chord-length"]),
-                float(data["free-stream-velocity"]),
-                float(data["suction-side-displacement-thickness"]),
-            ]
+            features = {column: float(data[column]) for column in TRAIN_COLUMNS}
         except (KeyError, TypeError, ValueError):
             return flask.jsonify({"error": "Missing or invalid parameters"}), 400
 
-        if any(value < 0 for value in features):
+        if any(value < 0 for value in features.values()):
             return flask.jsonify({"error": "Parameters cannot be negative"}), 400
 
-        prediction = self.model.predict([features])
+        prediction = self.model.predict(pd.DataFrame([features], columns=TRAIN_COLUMNS))
 
         return flask.jsonify({"prediction": prediction[0].tolist()})
